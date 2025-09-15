@@ -1,5 +1,8 @@
+import json
 import os
-from typing import List
+import re
+from datetime import datetime, timezone
+from typing import List, Optional
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
@@ -11,10 +14,60 @@ templates = Jinja2Templates(directory="templates")
 
 messages: List[dict] = []
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
-MCP_URL = os.getenv("EZBOOKKEEPING_MCP_URL", "")
-MCP_TOKEN = os.getenv("EZBOOKKEEPING_MCP_TOKEN", "")
+SYSTEM_PROMPT = (
+    "You are a bookkeeping assistant. When the user describes a transaction, "
+    "reply only with a JSON object containing keys: date (ISO 8601), amount, "
+    "account, category."
+)
+
+DEEPSEEK_API_KEY = os.getenv(
+    "DEEPSEEK_API_KEY",
+    "sk-0b66bdc798d6405c91a27cc7848439ae",
+)
+DEEPSEEK_API_BASE = os.getenv(
+    "DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"
+)
+MCP_URL = os.getenv(
+    "EZBOOKKEEPING_MCP_URL", "http://192.168.30.5:8422/mcp"
+)
+MCP_TOKEN = os.getenv(
+    "EZBOOKKEEPING_MCP_TOKEN",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyVG9rZW5JZCI6IjE5NzkyOTc2MTI1MDA0ODIyNzkiLCJqdGkiOiIzNzc1MTQ5OTU3NjU3Mzk1MjAwIiwidXNlcm5hbWUiOiJob2V5IiwidHlwZSI6NSwiaWF0IjoxNzU3OTQxNjczLCJleHAiOjEwOTgxMzEzNzEwfQ.IzfWt5xZrKbsEOG1nCkOhUtJol3aNel8SO3G_3SDcso",
+)
+
+
+def _extract_json(text: str) -> Optional[dict]:
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group())
+    except json.JSONDecodeError:
+        return None
+
+
+async def _mcp_add_transaction(data: dict) -> None:
+    if not MCP_URL or not MCP_TOKEN:
+        return
+
+    dt = datetime.fromisoformat(data["date"])
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    time_str = dt.isoformat().replace("+00:00", "Z")
+
+    payload = {
+        "arguments": {
+            "type": "expense",
+            "time": time_str,
+            "category_name": data["category"],
+            "account_name": data["account"],
+            "amount": str(data["amount"]),
+        }
+    }
+
+    headers = {"Authorization": f"Bearer {MCP_TOKEN}"}
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(f"{MCP_URL}/call/add_transaction", json=payload, headers=headers)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -28,7 +81,7 @@ async def chat(request: Request, message: str = Form(...)):
 
     payload = {
         "model": "deepseek-chat",
-        "messages": messages,
+        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
         "mcpServers": {
             "ezbookkeeping-mcp": {
                 "type": "streamable-http",
@@ -45,6 +98,14 @@ async def chat(request: Request, message: str = Form(...)):
         data = response.json()
 
     reply = data["choices"][0]["message"]["content"]
+    transaction = _extract_json(reply)
+    if transaction:
+        try:
+            await _mcp_add_transaction(transaction)
+            reply += "\n\n[MCP: recorded]"
+        except Exception as exc:  # pragma: no cover - best effort
+            reply += f"\n\n[MCP error: {exc}]"
+
     messages.append({"role": "assistant", "content": reply})
     return templates.TemplateResponse("index.html", {"request": request, "messages": messages})
 
