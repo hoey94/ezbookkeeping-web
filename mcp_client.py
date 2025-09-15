@@ -20,10 +20,7 @@ async def query_all_accounts(session: ClientSession) -> None:
 
 async def main() -> None:
     async with AsyncExitStack() as stack:
-        session = ClientSession(
-            MCP_URL,
-            headers={"Authorization": f"Bearer {MCP_TOKEN}"},
-        )
+        session = ClientSession(MCP_URL, MCP_TOKEN)
         await stack.enter_async_context(session)
         await query_all_accounts(session)
 
