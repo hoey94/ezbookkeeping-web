@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>DeepSeek Bookkeeping Chat</title>
+</head>
+<body>
+    <h1>DeepSeek Bookkeeping Chat</h1>
+    <form action="/chat" method="post">
+        <textarea name="message" rows="4" cols="60"></textarea><br>
+        <button type="submit">Send</button>
+    </form>
+    <div>
+    {% for m in messages %}
+        <p><strong>{{ m.role }}:</strong> {{ m.content }}</p>
+    {% endfor %}
+    </div>
+</body>
+</html>
