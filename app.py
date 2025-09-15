@@ -56,20 +56,19 @@ async def _mcp_add_transaction(data: dict) -> str:
     time_str = dt.isoformat().replace("+00:00", "Z")
 
     payload = {
+        "name": "add_transaction",
         "arguments": {
             "type": "expense",
             "time": time_str,
             "category_name": data["category"],
             "account_name": data["account"],
             "amount": str(data["amount"]),
-        }
+        },
     }
 
     headers = {"Authorization": f"Bearer {MCP_TOKEN}"}
     async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.post(
-            f"{MCP_URL}/call/add_transaction", json=payload, headers=headers
-        )
+        response = await client.post(f"{MCP_URL}/call", json=payload, headers=headers)
     response.raise_for_status()
     try:
         data = response.json()
