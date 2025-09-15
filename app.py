@@ -17,7 +17,7 @@ messages: List[dict] = []
 SYSTEM_PROMPT = (
     "You are a bookkeeping assistant. When the user describes a transaction, "
     "reply only with a JSON object containing keys: date (ISO 8601), amount, "
-    "account, category."
+    "account, category. Preserve any spaces in names or numbers."
 )
 
 DEEPSEEK_API_KEY = os.getenv(
@@ -46,9 +46,9 @@ def _extract_json(text: str) -> Optional[dict]:
         return None
 
 
-async def _mcp_add_transaction(data: dict) -> None:
+async def _mcp_add_transaction(data: dict) -> str:
     if not MCP_URL or not MCP_TOKEN:
-        return
+        return "MCP config missing"
 
     dt = datetime.fromisoformat(data["date"])
     if dt.tzinfo is None:
@@ -67,7 +67,16 @@ async def _mcp_add_transaction(data: dict) -> None:
 
     headers = {"Authorization": f"Bearer {MCP_TOKEN}"}
     async with httpx.AsyncClient(timeout=10) as client:
-        await client.post(f"{MCP_URL}/call/add_transaction", json=payload, headers=headers)
+        response = await client.post(
+            f"{MCP_URL}/call/add_transaction", json=payload, headers=headers
+        )
+    response.raise_for_status()
+    try:
+        data = response.json()
+    except ValueError:
+        data = {"response": response.text}
+    print("MCP response:", data)
+    return json.dumps(data, ensure_ascii=False)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -101,8 +110,8 @@ async def chat(request: Request, message: str = Form(...)):
     transaction = _extract_json(reply)
     if transaction:
         try:
-            await _mcp_add_transaction(transaction)
-            reply += "\n\n[MCP: recorded]"
+            mcp_result = await _mcp_add_transaction(transaction)
+            reply += f"\n\n[MCP: {mcp_result}]"
         except Exception as exc:  # pragma: no cover - best effort
             reply += f"\n\n[MCP error: {exc}]"
 
