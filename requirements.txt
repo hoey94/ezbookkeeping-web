@@ -1,2 +1,6 @@
+fastapi
+httpx
+jinja2
+uvicorn
 fastmcp>=2.11.3
-"mcp[cli]"
+mcp[cli]
